@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vocab Match AR - เกมจับคู่คำศัพท์ด้านฉุกเฉินการแพทย์</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Prompt & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Prompt:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- MediaPipe Hands CDN Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+    <style>
+        * {
+            font-family: 'Prompt', 'Inter', sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+            box-sizing: border-box;
+        }
+
+        /* Mirrored video feed for natural AR mirror experience */
+        .mirror-mode {
+            transform: scaleX(-1);
+        }
+
+        /* Ultra-transparent Glassmorphism for minimal camera camera blockage */
+        .glass-hud {
+            background: rgba(15, 23, 42, 0.55);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        /* Compact cards to maximize camera visibility in center */
+        .glass-card {
+            background: rgba(15, 23, 42, 0.45);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            border: 1.5px solid rgba(255, 255, 255, 0.25);
+            transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), 
+                        border-color 0.18s ease, 
+                        box-shadow 0.18s ease, 
+                        background 0.18s ease;
+        }
+
+        .card-hover {
+            transform: scale(1.03) translateX(4px);
+            border-color: #38bdf8 !important;
+            background: rgba(14, 165, 233, 0.35) !important;
+            box-shadow: 0 0 18px rgba(56, 189, 248, 0.6);
+        }
+
+        .card-selected {
+            transform: scale(1.05);
+            border-color: #22d3ee !important;
+            background: rgba(6, 182, 212, 0.45) !important;
+            box-shadow: 0 0 22px rgba(34, 211, 238, 0.85);
+        }
+
+        .card-correct {
+            animation: pulse-green 0.5s ease-in-out;
+            border-color: #10b981 !important;
+            background: rgba(16, 185, 129, 0.5) !important;
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.9);
+        }
+
+        .card-wrong {
+            animation: shake 0.35s ease-in-out;
+            border-color: #f43f5e !important;
+            background: rgba(244, 63, 94, 0.5) !important;
+            box-shadow: 0 0 22px rgba(244, 63, 94, 0.85);
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-8px); }
+            40% { transform: translateX(8px); }
+            60% { transform: translateX(-5px); }
+            80% { transform: translateX(5px); }
+        }
+
+        @keyframes pulse-green {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.08); }
+            100% { transform: scale(1); }
+        }
+
+        @keyframes float-up {
+            0% { opacity: 1; transform: translateY(0) scale(0.95); }
+            100% { opacity: 0; transform: translateY(-40px) scale(1.1); }
+        }
+
+        .animate-float {
+            animation: float-up 1s forwards ease-out;
+        }
+
+        .hand-cursor {
+            pointer-events: none;
+            position: fixed;
+            width: 36px;
+            height: 36px;
+            margin-left: -18px;
+            margin-top: -18px;
+            border-radius: 50%;
+            border: 2px solid #38bdf8;
+            box-shadow: 0 0 15px #0284c7;
+            background: rgba(56, 189, 248, 0.25);
+            z-index: 100;
+            transition: transform 0.05s linear;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-white min-h-screen overflow-hidden select-none">
+
+    <!-- AR WebCam Live Background Viewport -->
+    <div id="app-viewport" class="relative w-screen h-screen overflow-hidden bg-black">
+        
+        <!-- Live Camera Feed (Hidden, drawn mirrored onto canvas) -->
+        <video id="webcam-video" class="hidden" playsinline muted></video>
+
+        <!-- Mirrored Canvas Overlay for Hand Skeleton, Lines & Particles -->
+        <canvas id="ar-canvas" class="absolute inset-0 w-full h-full object-cover z-0 mirror-mode"></canvas>
+
+        <!-- Main UI Grid (Pushed to screen edges so camera is 100% visible) -->
+        <div class="relative z-10 flex flex-col justify-between w-full h-full p-3 md:p-5 pointer-events-none">
+            
+            <header class="flex justify-between items-center w-full max-w-7xl mx-auto glass-hud rounded-2xl p-2.5 md:p-3 shadow-xl border border-cyan-500/20">
+                <!-- Left Brand & Progress -->
+                <div class="flex items-center space-x-2 md:space-x-4">
+                    <div class="flex items-center space-x-2 bg-gradient-to-r from-blue-600/80 to-teal-500/80 px-3 py-1 rounded-xl shadow">
+                        <i class="fa-solid fa-heart-pulse text-rose-300 text-lg animate-pulse"></i>
+                        <span class="font-bold text-xs md:text-sm tracking-wide text-white">VocabMatch AR</span>
+                    </div>
+
+                    <!-- Score Badge -->
+                    <div class="flex items-center space-x-1.5 bg-slate-900/60 px-2.5 py-1 rounded-xl border border-slate-700/80">
+                        <i class="fa-solid fa-trophy text-amber-400 text-xs md:text-sm"></i>
+                        <span class="text-xs text-slate-300 hidden sm:inline">คะแนน:</span>
+                        <span id="score-display" class="font-extrabold text-sm md:text-base text-yellow-300">0</span>
+                    </div>
+
+                    <!-- Progress Badge -->
+                    <div class="flex items-center space-x-1.5 bg-slate-900/60 px-2.5 py-1 rounded-xl border border-slate-700/80">
+                        <i class="fa-solid fa-layer-group text-cyan-400 text-xs md:text-sm"></i>
+                        <span class="text-xs text-slate-300 hidden sm:inline">ข้อที่:</span>
+                        <span id="progress-display" class="font-bold text-xs md:text-sm text-cyan-300">1 / 10</span>
+                    </div>
+
+                    <!-- Timer Badge -->
+                    <div class="flex items-center space-x-1.5 bg-slate-900/60 px-2.5 py-1 rounded-xl border border-slate-700/80">
+                        <i class="fa-solid fa-clock text-emerald-400 text-xs md:text-sm"></i>
+                        <span id="timer-display" class="font-mono font-bold text-xs md:text-sm text-emerald-300">00:00</span>
+                    </div>
+                </div>
+
+                <!-- Right Stars & Camera Control -->
+                <div class="flex items-center space-x-2 md:space-x-3">
+                    <!-- Accuracy Badge -->
+                    <div class="flex items-center space-x-1 bg-slate-900/60 px-2.5 py-1 rounded-xl border border-slate-700/80">
+                        <i class="fa-solid fa-bullseye text-indigo-400 text-xs"></i>
+                        <span id="accuracy-display" class="font-bold text-xs text-indigo-300">100%</span>
+                    </div>
+
+                    <!-- Stars Display -->
+                    <div id="stars-container" class="hidden sm:flex text-amber-400 text-xs space-x-1 bg-slate-900/60 px-2 py-1 rounded-xl border border-slate-700/80">
+                        <i class="fa-solid fa-star"></i>
+                        <i class="fa-solid fa-star"></i>
+                        <i class="fa-solid fa-star"></i>
+                    </div>
+
+                    <!-- Camera Toggle Button -->
+                    <button id="btn-toggle-camera" class="pointer-events-auto bg-slate-800/90 hover:bg-slate-700 text-white px-3 py-1 rounded-xl transition text-xs flex items-center space-x-1 border border-slate-600 shadow">
+                        <i id="camera-icon" class="fa-solid fa-video text-emerald-400"></i>
+                        <span class="hidden md:inline">เปิด/ปิดกล้อง</span>
+                    </button>
+                </div>
+            </header>
+
+            <main class="flex-1 w-full max-w-7xl mx-auto my-2 md:my-3 flex justify-between items-center relative overflow-hidden">
+                
+                <!-- Left Sidebar: English Terms (Compact w-48 to w-60) -->
+                <div id="left-cards-column" class="w-48 md:w-60 flex flex-col space-y-2.5 my-auto z-10">
+                    <!-- English Cards rendered dynamically here -->
+                </div>
+
+                <!-- Central Toast Popup Message -->
+                <div id="toast-container" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-40 flex flex-col items-center"></div>
+
+                <!-- Right Sidebar: Thai Definitions (Compact w-48 to w-60) -->
+                <div id="right-cards-column" class="w-48 md:w-60 flex flex-col space-y-2.5 my-auto z-10">
+                    <!-- Thai Cards rendered dynamically here -->
+                </div>
+            </main>
+
+            <footer class="w-full max-w-7xl mx-auto glass-hud rounded-xl px-3 py-1.5 flex justify-between items-center text-xs text-slate-300 border border-slate-700/50">
+                <div class="flex items-center space-x-2">
+                    <span class="inline-block px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-bold border border-cyan-400/30">AR GUIDE</span>
+                    <span class="text-[11px] md:text-xs">ชี้ <u>นิ้วชี้</u> แตะการ์ดอังกฤษซ้าย แล้วลากไปวางบนการ์ดแปลไทยด้านขวา (รองรับการแตะ/เมาส์ด้วย)</span>
+                </div>
+                <div id="hand-status-badge" class="flex items-center space-x-1.5 bg-slate-900/80 px-2.5 py-0.5 rounded-full border border-slate-700">
+                    <span id="hand-status-dot" class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                    <span id="hand-status-text" class="text-[11px] text-amber-300">กำลังเตรียมกล้อง...</span>
+                </div>
+            </footer>
+        </div>
+
+        <!-- Custom Finger Cursor Ring -->
+        <div id="hand-cursor-pointer" class="hand-cursor hidden"></div>
+    </div>
+
+    <div id="start-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4">
+        <div class="glass-hud max-w-lg w-full p-6 md:p-7 rounded-3xl border border-cyan-500/40 text-center shadow-2xl relative">
+            <div class="w-16 h-16 bg-gradient-to-tr from-cyan-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-cyan-500/30 text-3xl text-white">
+                <i class="fa-solid fa-hand-pointer"></i>
+            </div>
+
+            <h1 class="text-2xl md:text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-teal-200 to-blue-400 mb-1">
+                Vocab Match AR
+            </h1>
+            <p class="text-cyan-200 font-medium text-xs md:text-sm mb-4">
+                เกมจับคู่คำศัพท์ฉุกเฉินการแพทย์ด้วยกล้อง AR & Hand Tracking
+            </p>
+
+            <div class="bg-slate-900/80 rounded-2xl p-3.5 text-left text-xs text-slate-300 space-y-2 border border-slate-700 mb-5">
+                <div class="flex items-start space-x-2">
+                    <i class="fa-solid fa-video text-cyan-400 mt-0.5"></i>
+                    <span><strong>โหมด AR Camera:</strong> ใช้ปลายนิ้วชี้ชี้บนหน้าจอ ไม่บังภาพกล้องเบื้องหลัง</span>
+                </div>
+                <div class="flex items-start space-x-2">
+                    <i class="fa-solid fa-hand-line text-emerald-400 mt-0.5"></i>
+                    <span><strong>การเล่น:</strong> แตะการ์ดภาษาอังกฤษด้านซ้าย แล้วลากเส้นไปยังคำแปลด้านขวา</span>
+                </div>
+                <div class="flex items-start space-x-2">
+                    <i class="fa-solid fa-mouse text-amber-400 mt-0.5"></i>
+                    <span><strong>โหมดสัมผัส/เมาส์:</strong> สามารถกดคลิกหรือลากบนหน้าจอสัมผัสได้ทันที</span>
+                </div>
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-2.5 justify-center">
+                <button id="btn-start-ar" class="bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold py-2.5 px-6 rounded-xl shadow-lg shadow-cyan-500/30 hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-camera"></i>
+                    <span>เริ่มเล่นด้วยกล้อง AR</span>
+                </button>
+                <button id="btn-start-mouse" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold py-2.5 px-5 rounded-xl border border-slate-600 hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-arrow-pointer"></i>
+                    <span>เล่นด้วยเมาส์ / สัมผัส</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="summary-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-slate-950/95 backdrop-blur-xl p-4">
+        <div class="glass-hud max-w-xl w-full p-6 rounded-3xl border border-emerald-500/40 text-center shadow-2xl relative">
+            
+            <div id="summary-badge-icon" class="w-20 h-20 bg-gradient-to-tr from-emerald-400 to-teal-500 rounded-full flex items-center justify-center mx-auto mb-3 shadow-xl text-4xl text-white">
+                <i class="fa-solid fa-trophy"></i>
+            </div>
+
+            <h2 id="summary-title" class="text-2xl md:text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-300 to-cyan-300 mb-1">
+                ยินดีด้วย! ทดสอบสำเร็จ
+            </h2>
+            <p id="summary-subtitle" class="text-emerald-200 text-xs md:text-sm font-medium mb-4">
+                ผลการทดสอบคำศัพท์ฉุกเฉินการแพทย์
+            </p>
+
+            <!-- Stars Row -->
+            <div id="summary-stars" class="flex justify-center space-x-2 text-3xl text-amber-400 mb-4">
+                <i class="fa-solid fa-star drop-shadow"></i>
+                <i class="fa-solid fa-star drop-shadow"></i>
+                <i class="fa-solid fa-star drop-shadow"></i>
+            </div>
+
+            <!-- Stats Metric Cards -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4">
+                <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-700">
+                    <div class="text-[11px] text-slate-400">คะแนนรวม</div>
+                    <div id="summary-score" class="text-xl font-black text-amber-400">0</div>
+                </div>
+                <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-700">
+                    <div class="text-[11px] text-slate-400">ความถูกต้อง</div>
+                    <div id="summary-accuracy" class="text-xl font-black text-cyan-400">0%</div>
+                </div>
+                <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-700">
+                    <div class="text-[11px] text-slate-400">ถูก / ผิด</div>
+                    <div class="text-lg font-bold text-emerald-400"><span id="summary-correct">0</span> / <span id="summary-wrong" class="text-rose-400">0</span></div>
+                </div>
+                <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-700">
+                    <div class="text-[11px] text-slate-400">เวลาที่ใช้</div>
+                    <div id="summary-time" class="text-lg font-bold text-indigo-300">00:00</div>
+                </div>
+            </div>
+
+            <div id="summary-feedback" class="bg-emerald-950/70 border border-emerald-500/30 rounded-xl p-3 text-emerald-200 text-xs md:text-sm font-semibold mb-5">
+                ระดับผลการเรียน: ดีเยี่ยม (Excellent)
+            </div>
+
+            <button id="btn-restart-game" class="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold py-2.5 px-8 rounded-xl shadow-lg hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center space-x-2 mx-auto">
+                <i class="fa-solid fa-rotate-right"></i>
+                <span>เล่นอีกครั้ง (Play Again)</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * Vocab Match AR - Educational AR Matching Game for Paramedic & Emergency Medical Students
+         * Pure HTML5 + MediaPipe Hands + Canvas Particle FX + Web Audio API
+         */
+
+        // ==========================================
+        // 1. VOCABULARY DATABASE (10 Medical Terms)
+        // ==========================================
+        const VOCAB_DATABASE = [
+            { id: 1, en: "Triage", th: "การคัดแยกผู้ป่วย" },
+            { id: 2, en: "Resuscitation", th: "การกู้ชีพ" },
+            { id: 3, en: "Hemorrhage", th: "ภาวะตกเลือด" },
+            { id: 4, en: "Trauma", th: "การบาดเจ็บ" },
+            { id: 5, en: "Asphyxia", th: "ภาวะขาดอากาศหายใจ" },
+            { id: 6, en: "Shock", th: "ภาวะช็อก" },
+            { id: 7, en: "Seizure", th: "อาการชัก" },
+            { id: 8, en: "Intubation", th: "การใส่ท่อช่วยหายใจ" },
+            { id: 9, en: "Defibrillation", th: "การกระตุกหัวใจด้วยไฟฟ้า" },
+            { id: 10, en: "Hypoxia", th: "ภาวะพร่องออกซิเจน" }
+        ];
+
+        const TOTAL_QUESTIONS = VOCAB_DATABASE.length; // 10 questions
+        const BATCH_SIZE = 5; // 5 cards per round
+
+        class SoundEngine {
+            constructor() {
+                this.ctx = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    this.ctx = new AudioCtx();
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            playSuccess() {
+                this.init();
+                if (!this.ctx) return;
+                const notes = [523.25, 659.25, 783.99, 1046.50];
+                notes.forEach((freq, idx) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(freq, this.ctx.currentTime + idx * 0.07);
+                    gain.gain.setValueAtTime(0.15, this.ctx.currentTime + idx * 0.07);
+                    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + idx * 0.07 + 0.25);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(this.ctx.currentTime + idx * 0.07);
+                    osc.stop(this.ctx.currentTime + idx * 0.07 + 0.25);
+                });
+            }
+
+            playError() {
+                this.init();
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(70, this.ctx.currentTime + 0.22);
+                gain.gain.setValueAtTime(0.18, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.22);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.22);
+            }
+
+            playHover() {
+                this.init();
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(400, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(750, this.ctx.currentTime + 0.04);
+                gain.gain.setValueAtTime(0.04, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.04);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.04);
+            }
+
+            playWin() {
+                this.init();
+                if (!this.ctx) return;
+                const tune = [
+                    { f: 523.25, d: 0.12 }, { f: 659.25, d: 0.12 }, { f: 783.99, d: 0.12 }, { f: 1046.50, d: 0.35 }
+                ];
+                let time = this.ctx.currentTime;
+                tune.forEach(note => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.value = note.f;
+                    gain.gain.setValueAtTime(0.18, time);
+                    gain.gain.exponentialRampToValueAtTime(0.001, time + note.d);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(time);
+                    osc.stop(time + note.d);
+                    time += note.d;
+                });
+            }
+        }
+
+        const soundFx = new SoundEngine();
+
+        class ParticleSystem {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.particles = [];
+                this.confetti = [];
+            }
+
+            spawnSparkles(x, y, count = 20) {
+                const colors = ['#38bdf8', '#34d399', '#facc15', '#a78bfa', '#ffffff'];
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 5 + 2;
+                    this.particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        radius: Math.random() * 3 + 2,
+                        color: colors[Math.floor(Math.random() * colors.length)],
+                        alpha: 1,
+                        decay: Math.random() * 0.03 + 0.02
+                    });
+                }
+            }
+
+            spawnConfetti(count = 50) {
+                const colors = ['#f43f5e', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
+                for (let i = 0; i < count; i++) {
+                    this.confetti.push({
+                        x: Math.random() * this.canvas.width,
+                        y: -10,
+                        vx: (Math.random() - 0.5) * 3,
+                        vy: Math.random() * 4 + 2,
+                        size: Math.random() * 8 + 5,
+                        color: colors[Math.floor(Math.random() * colors.length)],
+                        rotation: Math.random() * Math.PI * 2,
+                        rotSpeed: (Math.random() - 0.5) * 0.2,
+                        alpha: 1
+                    });
+                }
+            }
+
+            updateAndDraw() {
+                // Sparkles
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const p = this.particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.alpha -= p.decay;
+
+                    if (p.alpha <= 0) {
+                        this.particles.splice(i, 1);
+                        continue;
+                    }
+
+                    this.ctx.save();
+                    this.ctx.globalAlpha = Math.max(0, p.alpha);
+                    this.ctx.fillStyle = p.color;
+                    this.ctx.beginPath();
+                    this.ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    this.ctx.restore();
+                }
+
+                // Confetti
+                for (let i = this.confetti.length - 1; i >= 0; i--) {
+                    const c = this.confetti[i];
+                    c.x += c.vx;
+                    c.y += c.vy;
+                    c.rotation += c.rotSpeed;
+
+                    if (c.y > this.canvas.height + 20) {
+                        this.confetti.splice(i, 1);
+                        continue;
+                    }
+
+                    this.ctx.save();
+                    this.ctx.translate(c.x, c.y);
+                    this.ctx.rotate(c.rotation);
+                    this.ctx.fillStyle = c.color;
+                    this.ctx.fillRect(-c.size / 2, -c.size / 2, c.size, c.size);
+                    this.ctx.restore();
+                }
+            }
+        }
+
+        class VocabMatchGame {
+            constructor() {
+                // Elements
+                this.videoElement = document.getElementById('webcam-video');
+                this.canvasElement = document.getElementById('ar-canvas');
+                this.canvasCtx = this.canvasElement.getContext('2d');
+                this.leftColumn = document.getElementById('left-cards-column');
+                this.rightColumn = document.getElementById('right-cards-column');
+                this.cursorPointer = document.getElementById('hand-cursor-pointer');
+                this.toastContainer = document.getElementById('toast-container');
+
+                // HUD Displays
+                this.scoreDisplay = document.getElementById('score-display');
+                this.progressDisplay = document.getElementById('progress-display');
+                this.timerDisplay = document.getElementById('timer-display');
+                this.accuracyDisplay = document.getElementById('accuracy-display');
+                this.starsContainer = document.getElementById('stars-container');
+                this.handStatusBadge = document.getElementById('hand-status-badge');
+                this.handStatusDot = document.getElementById('hand-status-dot');
+                this.handStatusText = document.getElementById('hand-status-text');
+
+                // Particle Engine
+                this.fx = new ParticleSystem(this.canvasElement);
+
+                // Game State
+                this.score = 0;
+                this.totalAttempts = 0;
+                this.correctCount = 0;
+                this.wrongCount = 0;
+                this.currentQuestionIndex = 0;
+                this.selectedLeftCard = null;
+                this.timerInterval = null;
+                this.secondsElapsed = 0;
+                this.isGameActive = false;
+
+                // Tracking State
+                this.smoothFingerPos = { x: -100, y: -100 };
+                this.isHandDetected = false;
+                this.isCameraMode = false;
+                this.isMouseDown = false;
+                this.hoveredCardElement = null;
+
+                // MediaPipe
+                this.hands = null;
+                this.camera = null;
+
+                this.initEvents();
+                this.resizeCanvas();
+                window.addEventListener('resize', () => this.resizeCanvas());
+            }
+
+            resizeCanvas() {
+                this.canvasElement.width = window.innerWidth;
+                this.canvasElement.height = window.innerHeight;
+            }
+
+            initEvents() {
+                document.getElementById('btn-start-ar').addEventListener('click', () => {
+                    document.getElementById('start-modal').classList.add('hidden');
+                    this.startCameraMode();
+                    this.startGame();
+                });
+
+                document.getElementById('btn-start-mouse').addEventListener('click', () => {
+                    document.getElementById('start-modal').classList.add('hidden');
+                    this.startMouseMode();
+                    this.startGame();
+                });
+
+                document.getElementById('btn-restart-game').addEventListener('click', () => {
+                    document.getElementById('summary-modal').classList.add('hidden');
+                    this.startGame();
+                });
+
+                document.getElementById('btn-toggle-camera').addEventListener('click', () => {
+                    if (this.isCameraMode) {
+                        this.stopCamera();
+                        this.startMouseMode();
+                    } else {
+                        this.startCameraMode();
+                    }
+                });
+
+                // Mouse / Touch Handlers
+                window.addEventListener('mousemove', (e) => this.handlePointerMove(e.clientX, e.clientY));
+                window.addEventListener('mousedown', (e) => {
+                    this.isMouseDown = true;
+                    this.handlePointerDown(e.clientX, e.clientY);
+                });
+                window.addEventListener('mouseup', (e) => {
+                    this.isMouseDown = false;
+                    this.handlePointerUp(e.clientX, e.clientY);
+                });
+
+                // Mobile Touch Support
+                window.addEventListener('touchmove', (e) => {
+                    if (e.touches.length > 0) this.handlePointerMove(e.touches[0].clientX, e.touches[0].clientY);
+                });
+                window.addEventListener('touchstart', (e) => {
+                    if (e.touches.length > 0) {
+                        this.isMouseDown = true;
+                        this.handlePointerDown(e.touches[0].clientX, e.touches[0].clientY);
+                    }
+                });
+                window.addEventListener('touchend', (e) => {
+                    this.isMouseDown = false;
+                    if (e.changedTouches.length > 0) {
+                        this.handlePointerUp(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+                    }
+                });
+            }
+
+            startCameraMode() {
+                this.isCameraMode = true;
+                this.handStatusBadge.classList.remove('hidden');
+                this.handStatusText.innerText = 'กำลังเปิดกล้อง...';
+
+                try {
+                    this.hands = new Hands({
+                        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                    });
+
+                    this.hands.setOptions({
+                        maxNumHands: 1,
+                        modelComplexity: 1,
+                        minDetectionConfidence: 0.6,
+                        minTrackingConfidence: 0.6
+                    });
+
+                    this.hands.onResults((results) => this.onHandResults(results));
+
+                    this.camera = new Camera(this.videoElement, {
+                        onFrame: async () => {
+                            if (this.isCameraMode) {
+                                await this.hands.send({ image: this.videoElement });
+                            }
+                        },
+                        width: 1280,
+                        height: 720
+                    });
+
+                    this.camera.start().then(() => {
+                        this.handStatusDot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+                        this.handStatusText.innerText = 'ระบบกล้อง AR พร้อมใช้งาน';
+                        document.getElementById('camera-icon').className = 'fa-solid fa-video text-emerald-400';
+                    }).catch(err => {
+                        console.warn("Camera access warning:", err);
+                        this.startMouseMode();
+                    });
+
+                } catch (err) {
+                    console.error("MediaPipe initialization error:", err);
+                    this.startMouseMode();
+                }
+            }
+
+            stopCamera() {
+                if (this.camera) {
+                    this.camera.stop();
+                    this.camera = null;
+                }
+                this.isCameraMode = false;
+                this.handStatusDot.className = 'w-2 h-2 rounded-full bg-slate-500';
+                this.handStatusText.innerText = 'ปิดกล้องแล้ว (โหมดเมาส์/สัมผัส)';
+                document.getElementById('camera-icon').className = 'fa-solid fa-video-slash text-slate-400';
+            }
+
+            startMouseMode() {
+                this.isCameraMode = false;
+                this.cursorPointer.classList.remove('hidden');
+                this.handStatusDot.className = 'w-2 h-2 rounded-full bg-blue-400';
+                this.handStatusText.innerText = 'โหมดเมาส์ / สัมผัสหน้าจอ';
+            }
+
+            onHandResults(results) {
+                this.canvasCtx.save();
+                this.canvasCtx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
+
+                // Draw video frame onto canvas (Mirrored)
+                if (results.image) {
+                    this.canvasCtx.drawImage(results.image, 0, 0, this.canvasElement.width, this.canvasElement.height);
+                }
+
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    this.isHandDetected = true;
+                    const landmarks = results.multiHandLandmarks[0];
+
+                    // Draw hand connections on top of video feed
+                    drawConnectors(this.canvasCtx, landmarks, HAND_CONNECTIONS, { color: 'rgba(56, 189, 248, 0.7)', lineWidth: 2 });
+                    drawLandmarks(this.canvasCtx, landmarks, { color: 'rgba(255, 255, 255, 0.85)', lineWidth: 1, radius: 3 });
+
+                    // Index Finger Tip is Landmark #8
+                    const indexTip = landmarks[8];
+                    const rawX = (1 - indexTip.x) * window.innerWidth;
+                    const rawY = indexTip.y * window.innerHeight;
+
+                    // Smoothing filter
+                    this.smoothFingerPos.x += (rawX - this.smoothFingerPos.x) * 0.35;
+                    this.smoothFingerPos.y += (rawY - this.smoothFingerPos.y) * 0.35;
+
+                    this.drawFingerTipGlow(this.smoothFingerPos.x, this.smoothFingerPos.y);
+                    this.handlePointerMove(this.smoothFingerPos.x, this.smoothFingerPos.y);
+
+                    // Pinch gesture detection (Index Tip to Thumb Tip Landmark #4)
+                    const thumbTip = landmarks[4];
+                    const thumbX = (1 - thumbTip.x) * window.innerWidth;
+                    const thumbY = thumbTip.y * window.innerHeight;
+                    const pinchDist = Math.hypot(rawX - thumbX, rawY - thumbY);
+
+                    if (pinchDist < 40) {
+                        if (!this.isMouseDown) {
+                            this.isMouseDown = true;
+                            this.handlePointerDown(this.smoothFingerPos.x, this.smoothFingerPos.y);
+                        }
+                    } else {
+                        if (this.isMouseDown) {
+                            this.isMouseDown = false;
+                            this.handlePointerUp(this.smoothFingerPos.x, this.smoothFingerPos.y);
+                        }
+                    }
+
+                    this.cursorPointer.classList.add('hidden');
+
+                } else {
+                    this.isHandDetected = false;
+                }
+
+                this.renderDragLine();
+                this.fx.updateAndDraw();
+                this.canvasCtx.restore();
+            }
+
+            drawFingerTipGlow(x, y) {
+                this.canvasCtx.save();
+                this.canvasCtx.beginPath();
+                this.canvasCtx.arc(x, y, 18, 0, Math.PI * 2);
+                this.canvasCtx.fillStyle = 'rgba(56, 189, 248, 0.3)';
+                this.canvasCtx.shadowColor = '#0284c7';
+                this.canvasCtx.shadowBlur = 15;
+                this.canvasCtx.fill();
+
+                this.canvasCtx.beginPath();
+                this.canvasCtx.arc(x, y, 8, 0, Math.PI * 2);
+                this.canvasCtx.fillStyle = '#38bdf8';
+                this.canvasCtx.strokeStyle = '#ffffff';
+                this.canvasCtx.lineWidth = 2;
+                this.canvasCtx.stroke();
+                this.canvasCtx.fill();
+                this.canvasCtx.restore();
+            }
+
+            startGame() {
+                this.score = 0;
+                this.totalAttempts = 0;
+                this.correctCount = 0;
+                this.wrongCount = 0;
+                this.currentQuestionIndex = 0;
+                this.selectedLeftCard = null;
+                this.secondsElapsed = 0;
+                this.isGameActive = true;
+
+                this.updateHUD();
+                this.startTimer();
+                this.loadNextBatch();
+            }
+
+            startTimer() {
+                if (this.timerInterval) clearInterval(this.timerInterval);
+                this.timerInterval = setInterval(() => {
+                    if (this.isGameActive) {
+                        this.secondsElapsed++;
+                        const mins = String(Math.floor(this.secondsElapsed / 60)).padStart(2, '0');
+                        const secs = String(this.secondsElapsed % 60).padStart(2, '0');
+                        this.timerDisplay.innerText = `${mins}:${secs}`;
+                    }
+                }, 1000);
+            }
+
+            loadNextBatch() {
+                this.leftColumn.innerHTML = '';
+                this.rightColumn.innerHTML = '';
+                this.selectedLeftCard = null;
+
+                const batchItems = VOCAB_DATABASE.slice(this.currentQuestionIndex, this.currentQuestionIndex + BATCH_SIZE);
+
+                if (batchItems.length === 0) {
+                    this.endGame();
+                    return;
+                }
+
+                // Render Left Compact English Cards
+                batchItems.forEach(item => {
+                    const card = document.createElement('div');
+                    card.id = `card-left-${item.id}`;
+                    card.dataset.id = item.id;
+                    card.dataset.side = 'left';
+                    card.className = 'glass-card pointer-events-auto px-3 py-2.5 rounded-xl cursor-pointer flex items-center justify-between shadow-md hover:border-cyan-400';
+                    card.innerHTML = `
+                        <div class="flex items-center space-x-2">
+                            <span class="w-6 h-6 rounded-lg bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-xs font-bold border border-cyan-400/30">
+                                <i class="fa-solid fa-stethoscope"></i>
+                            </span>
+                            <span class="font-bold text-xs md:text-sm text-slate-100">${item.en}</span>
+                        </div>
+                        <i class="fa-solid fa-circle-dot text-[10px] text-slate-400"></i>
+                    `;
+                    this.leftColumn.appendChild(card);
+                });
+
+                // Render Right Compact Thai Cards (Shuffled)
+                const shuffledThai = [...batchItems].sort(() => Math.random() - 0.5);
+                shuffledThai.forEach(item => {
+                    const card = document.createElement('div');
+                    card.id = `card-right-${item.id}`;
+                    card.dataset.id = item.id;
+                    card.dataset.side = 'right';
+                    card.className = 'glass-card pointer-events-auto px-3 py-2.5 rounded-xl cursor-pointer flex items-center justify-between shadow-md hover:border-emerald-400';
+                    card.innerHTML = `
+                        <i class="fa-solid fa-circle-dot text-[10px] text-slate-400"></i>
+                        <div class="flex items-center space-x-2 text-right">
+                            <span class="font-medium text-xs md:text-sm text-slate-100">${item.th}</span>
+                            <span class="w-6 h-6 rounded-lg bg-teal-500/20 text-teal-300 flex items-center justify-center text-xs font-bold border border-teal-400/30">
+                                <i class="fa-solid fa-heart-pulse"></i>
+                            </span>
+                        </div>
+                    `;
+                    this.rightColumn.appendChild(card);
+                });
+
+                this.updateHUD();
+            }
+
+            handlePointerMove(x, y) {
+                this.cursorPointer.style.left = `${x}px`;
+                this.cursorPointer.style.top = `${y}px`;
+
+                const elem = document.elementFromPoint(x, y);
+                const cardElem = elem ? elem.closest('.glass-card') : null;
+
+                if (cardElem !== this.hoveredCardElement) {
+                    if (this.hoveredCardElement && !this.hoveredCardElement.classList.contains('card-selected')) {
+                        this.hoveredCardElement.classList.remove('card-hover');
+                    }
+                    this.hoveredCardElement = cardElem;
+                    if (this.hoveredCardElement && !this.hoveredCardElement.classList.contains('card-matched')) {
+                        this.hoveredCardElement.classList.add('card-hover');
+                        soundFx.playHover();
+                    }
+                }
+            }
+
+            handlePointerDown(x, y) {
+                const elem = document.elementFromPoint(x, y);
+                const cardElem = elem ? elem.closest('.glass-card') : null;
+
+                if (!cardElem || cardElem.classList.contains('card-matched')) return;
+
+                const side = cardElem.dataset.side;
+                const id = parseInt(cardElem.dataset.id);
+
+                if (side === 'left') {
+                    if (this.selectedLeftCard) {
+                        const prevSelected = document.getElementById(`card-left-${this.selectedLeftCard}`);
+                        if (prevSelected) prevSelected.classList.remove('card-selected');
+                    }
+                    this.selectedLeftCard = id;
+                    cardElem.classList.add('card-selected');
+                    soundFx.playHover();
+                } else if (side === 'right' && this.selectedLeftCard) {
+                    this.validatePair(this.selectedLeftCard, id);
+                }
+            }
+
+            handlePointerUp(x, y) {
+                const elem = document.elementFromPoint(x, y);
+                const cardElem = elem ? elem.closest('.glass-card') : null;
+
+                if (cardElem && cardElem.dataset.side === 'right' && this.selectedLeftCard) {
+                    const rightId = parseInt(cardElem.dataset.id);
+                    this.validatePair(this.selectedLeftCard, rightId);
+                }
+            }
+
+            validatePair(leftId, rightId) {
+                const leftCard = document.getElementById(`card-left-${leftId}`);
+                const rightCard = document.getElementById(`card-right-${rightId}`);
+
+                if (!leftCard || !rightCard) return;
+
+                this.totalAttempts++;
+
+                if (leftId === rightId) {
+                    // Correct
+                    this.correctCount++;
+                    this.score += 10;
+                    soundFx.playSuccess();
+
+                    leftCard.classList.remove('card-selected', 'card-hover');
+                    leftCard.classList.add('card-correct', 'card-matched');
+                    rightCard.classList.remove('card-hover');
+                    rightCard.classList.add('card-correct', 'card-matched');
+
+                    const rectLeft = leftCard.getBoundingClientRect();
+                    const rectRight = rightCard.getBoundingClientRect();
+                    this.fx.spawnSparkles(rectLeft.left + rectLeft.width / 2, rectLeft.top + rectLeft.height / 2, 18);
+                    this.fx.spawnSparkles(rectRight.left + rectRight.width / 2, rectRight.top + rectRight.height / 2, 18);
+
+                    this.showToast('ถูกต้อง! +10', 'success');
+
+                    setTimeout(() => {
+                        leftCard.style.opacity = '0';
+                        leftCard.style.transform = 'scale(0.8)';
+                        leftCard.style.pointerEvents = 'none';
+
+                        rightCard.style.opacity = '0';
+                        rightCard.style.transform = 'scale(0.8)';
+                        rightCard.style.pointerEvents = 'none';
+                    }, 500);
+
+                    this.selectedLeftCard = null;
+                    this.currentQuestionIndex++;
+
+                    setTimeout(() => this.checkBatchProgress(), 800);
+
+                } else {
+                    // Incorrect
+                    this.wrongCount++;
+                    this.score = Math.max(0, this.score - 5);
+                    soundFx.playError();
+
+                    leftCard.classList.add('card-wrong');
+                    rightCard.classList.add('card-wrong');
+
+                    this.showToast('ลองใหม่อีกครั้ง -5', 'error');
+
+                    setTimeout(() => {
+                        leftCard.classList.remove('card-wrong', 'card-selected');
+                        rightCard.classList.remove('card-wrong');
+                        this.selectedLeftCard = null;
+                    }, 450);
+                }
+
+                this.updateHUD();
+            }
+
+            checkBatchProgress() {
+                const remainingLeft = this.leftColumn.querySelectorAll('.glass-card:not(.card-matched)').length;
+                if (remainingLeft === 0) {
+                    if (this.currentQuestionIndex < TOTAL_QUESTIONS) {
+                        this.loadNextBatch();
+                    } else {
+                        this.endGame();
+                    }
+                }
+            }
+
+            renderDragLine() {
+                if (!this.selectedLeftCard) return;
+
+                const leftCard = document.getElementById(`card-left-${this.selectedLeftCard}`);
+                if (!leftCard) return;
+
+                const rect = leftCard.getBoundingClientRect();
+                const startX = rect.right;
+                const startY = rect.top + rect.height / 2;
+
+                const endX = this.isHandDetected ? this.smoothFingerPos.x : parseFloat(this.cursorPointer.style.left || startX);
+                const endY = this.isHandDetected ? this.smoothFingerPos.y : parseFloat(this.cursorPointer.style.top || startY);
+
+                this.canvasCtx.save();
+                this.canvasCtx.beginPath();
+                this.canvasCtx.moveTo(startX, startY);
+
+                const cp1x = startX + (endX - startX) * 0.5;
+                const cp1y = startY;
+                const cp2x = startX + (endX - startX) * 0.5;
+                const cp2y = endY;
+
+                this.canvasCtx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, endY);
+                this.canvasCtx.strokeStyle = 'rgba(34, 211, 238, 0.9)';
+                this.canvasCtx.lineWidth = 3.5;
+                this.canvasCtx.shadowColor = '#06b6d4';
+                this.canvasCtx.shadowBlur = 12;
+                this.canvasCtx.stroke();
+                this.canvasCtx.restore();
+            }
+
+            showToast(message, type) {
+                const toast = document.createElement('div');
+                toast.className = `px-5 py-2 rounded-xl text-sm font-bold shadow-xl backdrop-blur-md animate-float flex items-center space-x-2 ${
+                    type === 'success' 
+                        ? 'bg-emerald-500/90 text-white border border-emerald-300' 
+                        : 'bg-rose-500/90 text-white border border-rose-300'
+                }`;
+                toast.innerHTML = `
+                    <i class="fa-solid ${type === 'success' ? 'fa-circle-check text-yellow-300' : 'fa-triangle-exclamation'}"></i>
+                    <span>${message}</span>
+                `;
+
+                this.toastContainer.appendChild(toast);
+                setTimeout(() => toast.remove(), 1000);
+            }
+
+            updateHUD() {
+                this.scoreDisplay.innerText = this.score;
+                this.progressDisplay.innerText = `${Math.min(this.currentQuestionIndex + 1, TOTAL_QUESTIONS)} / ${TOTAL_QUESTIONS}`;
+
+                const accuracy = this.totalAttempts > 0 
+                    ? Math.round((this.correctCount / this.totalAttempts) * 100) 
+                    : 100;
+                this.accuracyDisplay.innerText = `${accuracy}%`;
+
+                let stars = 3;
+                if (accuracy < 60) stars = 1;
+                else if (accuracy < 85) stars = 2;
+
+                let starsHTML = '';
+                for (let i = 0; i < 3; i++) {
+                    if (i < stars) {
+                        starsHTML += '<i class="fa-solid fa-star text-amber-400"></i>';
+                    } else {
+                        starsHTML += '<i class="fa-regular fa-star text-slate-600"></i>';
+                    }
+                }
+                this.starsContainer.innerHTML = starsHTML;
+            }
+
+            endGame() {
+                this.isGameActive = false;
+                if (this.timerInterval) clearInterval(this.timerInterval);
+
+                soundFx.playWin();
+                this.fx.spawnConfetti(70);
+
+                const accuracy = this.totalAttempts > 0 
+                    ? Math.round((this.correctCount / this.totalAttempts) * 100) 
+                    : 100;
+
+                let gradeText = '';
+                let starsCount = 3;
+
+                if (accuracy >= 85) {
+                    gradeText = 'ระดับผลการเรียน: ดีเยี่ยม (Excellent) - คุณมีความรู้ระดับเชี่ยวชาญ!';
+                    starsCount = 3;
+                } else if (accuracy >= 65) {
+                    gradeText = 'ระดับผลการเรียน: ดี (Good) - จดจำคำศัพท์ได้ดี พัฒนาต่ออีกนิด!';
+                    starsCount = 2;
+                } else {
+                    gradeText = 'ระดับผลการเรียน: ควรฝึกเพิ่มเติม (Needs Improvement) - ทบทวนแล้วลองอีกครั้ง!';
+                    starsCount = 1;
+                }
+
+                document.getElementById('summary-score').innerText = this.score;
+                document.getElementById('summary-accuracy').innerText = `${accuracy}%`;
+                document.getElementById('summary-correct').innerText = this.correctCount;
+                document.getElementById('summary-wrong').innerText = this.wrongCount;
+                document.getElementById('summary-time').innerText = this.timerDisplay.innerText;
+                document.getElementById('summary-feedback').innerText = gradeText;
+
+                let starsHTML = '';
+                for (let i = 0; i < 3; i++) {
+                    if (i < starsCount) {
+                        starsHTML += '<i class="fa-solid fa-star text-amber-400 drop-shadow"></i>';
+                    } else {
+                        starsHTML += '<i class="fa-regular fa-star text-slate-600"></i>';
+                    }
+                }
+                document.getElementById('summary-stars').innerHTML = starsHTML;
+                document.getElementById('summary-modal').classList.remove('hidden');
+            }
+        }
+
+        // Initialize application on window load
+        window.addEventListener('DOMContentLoaded', () => {
+            window.gameApp = new VocabMatchGame();
+        });
+    </script>
+</body>
+</html>
